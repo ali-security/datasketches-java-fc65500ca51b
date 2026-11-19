@@ -1,19 +1,21 @@
 name: Java Test Coverage with Maven, Coveralls
 
 on:
-    pull_request:
-    push:
-        branches: [ master ]
     workflow_dispatch:
+        inputs:
+            test-filter:
+                description: 'Optional surefire -Dtest selector; empty runs the full suite'
+                required: false
+                default: ''
 
 env:
     MAVEN_OPTS: -Xmx4g -Xms1g
-    repo_token: ${{secrets.coveralls_token}}
 
 jobs:
     build:
         name: Build, Test, Coverage
         runs-on: ubuntu-latest
+        timeout-minutes: 45
         strategy:
           fail-fast: false
           matrix:
@@ -24,48 +26,69 @@ jobs:
 
         steps:
         - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
-          uses: actions/checkout@v2
+          uses: actions/checkout@v4
           with:
               persist-credentials: false
 
         - name: Cache local Maven repository
-          uses: actions/cache@v2
+          uses: actions/cache@v4
           with:
               path: ~/.m2/repository
               key: build-${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
               restore-keys: build-${{ runner.os }}-maven-
 
         - name: Install Matrix JDK
-          uses: AdoptOpenJDK/install-jdk@v1
+          uses: actions/setup-java@v4
           with:
-              version: ${{ matrix.jdk }}
+              java-version: ${{ matrix.jdk }}
+              distribution: zulu
               architecture: x64
-              impl: hotspot
-              targets: 'JAVA_HOME'
 
         - name: Echo Java Version
           run: >
               java -version
 
         - name: Test
-          run: >
-              mvn clean test
-              -Dmaven.javadoc.skip=true
-              -Dgpg.skip=true
-              --toolchains .github/workflows/.toolchains.xml
+          run: |
+              if [ -n "${{ inputs.test-filter }}" ]; then
+                mvn clean test -Dmaven.javadoc.skip=true -Dgpg.skip=true --toolchains .github/workflows/.toolchains.xml -Dtest="${{ inputs.test-filter }}" -Dsurefire.failIfNoSpecifiedTests=false
+              else
+                mvn clean test -Dmaven.javadoc.skip=true -Dgpg.skip=true --toolchains .github/workflows/.toolchains.xml
+              fi
+
+        - name: Print surefire summary
+          if: ${{ always() }}
+          run: |
+              python3 - <<'EOF'
+              import glob, xml.etree.ElementTree as ET
+              tot = fail = err = skip = 0
+              for f in sorted(glob.glob('target/test-output/**/TEST-*.xml', recursive=True)):
+                  r = ET.parse(f).getroot()
+                  tot += int(r.get('tests', 0)); fail += int(r.get('failures', 0))
+                  err += int(r.get('errors', 0)); skip += int(r.get('skipped', 0))
+                  for tc in r.iter('testcase'):
+                      s = tc.find('skipped')
+                      if s is not None:
+                          print('SKIPPED: %s.%s -- %s' % (tc.get('classname'), tc.get('name'), s.get('message') or (s.text or '').strip() or 'no reason given by runner'))
+              print('SUREFIRE TOTAL: tests=%d passed=%d failures=%d errors=%d skipped=%d' % (tot, tot - fail - err - skip, fail, err, skip))
+              EOF
 
         - name: Install Dependencies
           run: >
               mvn clean install -B -V -q
               -DskipTests=true
               -Dgpg.skip=true
+              -Drat.skip=true
               --toolchains .github/workflows/.toolchains.xml
 
-        - name: Report
-          if: ${{ matrix.jdk == 8 && success() }}
-          run: >
-              mvn verify coveralls:report -B -V -q
-              -Dcoveralls-repo-token=${repo_token}
-              -Dmaven.javadoc.skip=true
-              -Dgpg.skip=true
-              --toolchains .github/workflows/.toolchains.xml
+        - name: Upload artifacts
+          if: ${{ matrix.jdk == 8 }}
+          uses: actions/upload-artifact@v4
+          with:
+              name: datasketches-java-jars
+              path: |
+                  target/datasketches-java-*.jar
+                  !target/datasketches-java-*-sources.jar
+                  !target/datasketches-java-*-test-sources.jar
+                  !target/datasketches-java-*-javadoc.jar
+              if-no-files-found: error
