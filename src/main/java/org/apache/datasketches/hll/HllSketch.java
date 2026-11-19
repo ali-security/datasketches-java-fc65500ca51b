@@ -207,12 +207,12 @@ public class HllSketch extends BaseHllSketch {
 
   //used by union and above
   static final HllSketch writableWrap( final WritableMemory srcWmem, final boolean checkRebuild) {
+    final CurMode curMode = checkPreamble(srcWmem); //checks lgK before it is used
     final int lgConfigK = extractLgK(srcWmem);
     final TgtHllType tgtHllType = extractTgtHllType(srcWmem);
     final long minBytes = getMaxUpdatableSerializationBytes(lgConfigK, tgtHllType);
     final long capBytes = srcWmem.getCapacity();
     HllUtil.checkMemSize(minBytes, capBytes);
-    final CurMode curMode = checkPreamble(srcWmem);
     final HllSketch directSketch;
     if (curMode == CurMode.HLL) {
       if (tgtHllType == TgtHllType.HLL_4) {

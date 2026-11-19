@@ -19,12 +19,16 @@
 
 package org.apache.datasketches.tuple.arrayofdoubles;
 
+import static org.apache.datasketches.Util.MAX_LG_NOM_LONGS;
+import static org.apache.datasketches.Util.MIN_LG_ARR_LONGS;
 import static org.apache.datasketches.Util.REBUILD_THRESHOLD;
 import static org.apache.datasketches.Util.RESIZE_THRESHOLD;
 import static org.apache.datasketches.Util.ceilingPowerOf2;
+import static org.apache.datasketches.Util.checkBounds;
 
 import org.apache.datasketches.QuickSelect;
 import org.apache.datasketches.SketchesArgumentException;
+import org.apache.datasketches.memory.Memory;
 import org.apache.datasketches.memory.WritableMemory;
 
 /**
@@ -53,6 +57,34 @@ abstract class ArrayOfDoublesQuickSelectSketch extends ArrayOfDoublesUpdatableSk
   static final int ENTRIES_START = 32;
 
   static final int DEFAULT_LG_RESIZE_FACTOR = 3;
+
+  /**
+   * Checks that the given image holds the whole hash table it declares, and that its counts are valid,
+   * before anything is allocated or read from it. The serialized form always includes the whole table.
+   * @param mem the serialized QuickSelect sketch
+   * @return the number of values per key declared by the image
+   * @throws SketchesArgumentException if the image is too small or its counts are invalid
+   */
+  static int checkQuickSelectImage(final Memory mem) {
+    checkBounds(0, ENTRIES_START, mem.getCapacity());
+    final int numValues = mem.getByte(NUM_VALUES_BYTE);
+    final int lgCurCapacity = mem.getByte(LG_CUR_CAPACITY_BYTE);
+    final int lgNomEntries = mem.getByte(LG_NOM_ENTRIES_BYTE);
+    //the table grows to at most twice the nominal entries, but is never smaller than the minimum table size
+    if ((numValues < 1) || (lgNomEntries < 0) || (lgNomEntries > MAX_LG_NOM_LONGS) || (lgCurCapacity < 0)
+        || (lgCurCapacity > Math.max(lgNomEntries + 1, MIN_LG_ARR_LONGS))) {
+      throw new SketchesArgumentException("Possible corruption: numValues: " + numValues
+          + ", lgNomEntries: " + lgNomEntries + ", lgCurrentCapacity: " + lgCurCapacity);
+    }
+    final long capacity = 1L << lgCurCapacity;
+    final int count = mem.getInt(RETAINED_ENTRIES_INT);
+    if ((count < 0) || (count > capacity)) {
+      throw new SketchesArgumentException("Possible corruption: invalid retained entries: " + count);
+    }
+    checkBounds(ENTRIES_START, capacity * (SIZE_OF_KEY_BYTES + ((long) SIZE_OF_VALUE_BYTES * numValues)),
+        mem.getCapacity());
+    return numValues;
+  }
 
   // these can be derived from other things, but are kept here for performance
   int rebuildThreshold_; //absolute value relative to current capacity

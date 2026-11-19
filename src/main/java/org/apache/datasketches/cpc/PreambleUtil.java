@@ -19,6 +19,7 @@
 
 package org.apache.datasketches.cpc;
 
+import static org.apache.datasketches.Util.checkBounds;
 import static org.apache.datasketches.Util.zeroPad;
 import static org.apache.datasketches.cpc.RuntimeAsserts.rtAssert;
 import static org.apache.datasketches.cpc.RuntimeAsserts.rtAssertEquals;
@@ -376,6 +377,7 @@ final class PreambleUtil {
   static int[] getSvStream(final Memory mem) {
     final long offset = getSvStreamOffset(mem);
     final int svLengthInts = getSvLengthInts(mem);
+    checkBounds(offset, (long) svLengthInts * Integer.BYTES, mem.getCapacity()); //before allocating
     final int[] svStream = new int[svLengthInts];
     mem.getIntArray(offset, svStream, 0, svLengthInts);
     return svStream;
@@ -384,6 +386,7 @@ final class PreambleUtil {
   static int[] getWStream(final Memory mem) {
     final long offset = getWStreamOffset(mem);
     final int wLength = getWLengthInts(mem);
+    checkBounds(offset, (long) wLength * Integer.BYTES, mem.getCapacity()); //before allocating
     final int[] wStream = new int[wLength];
     mem.getIntArray(offset, wStream, 0, wLength);
     return wStream;

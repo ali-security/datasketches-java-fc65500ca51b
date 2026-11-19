@@ -43,7 +43,7 @@ public class ArrayOfDoublesSerDe extends ArrayOfItemsSerDe<Double> {
 
   @Override
   public Double[] deserializeFromMemory(final Memory mem, final int length) {
-    Util.checkBounds(0, Double.BYTES, mem.getCapacity());
+    Util.checkBounds(0, (long) length * Double.BYTES, mem.getCapacity());
     final Double[] array = new Double[length];
     long offsetBytes = 0;
     for (int i = 0; i < length; i++) {

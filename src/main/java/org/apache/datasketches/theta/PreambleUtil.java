@@ -495,6 +495,22 @@ final class PreambleUtil {
     return preLongs;
   }
 
+  /**
+   * Checks that a serial version 3 compact image, which is not empty and not a single item, holds the
+   * number of hashes it declares, before anything is allocated or read from it.
+   * @param mem the compact image
+   * @throws SketchesArgumentException if the image is too small or the count is invalid
+   */
+  static void checkCompactImage(final Memory mem) {
+    final int preLongs = getAndCheckPreLongs(mem);
+    final int curCount = (preLongs > 1) ? extractCurCount(mem) : 0;
+    final long reqBytes = ((long) preLongs << 3) + ((long) curCount << 3);
+    if ((curCount < 0) || (mem.getCapacity() < reqBytes)) {
+      throw new SketchesArgumentException("Possible corruption: curCount " + curCount
+          + " needs " + reqBytes + " bytes, Memory has " + mem.getCapacity());
+    }
+  }
+
   static final short checkMemorySeedHash(final Memory mem, final long seed) {
     final short seedHashMem = (short) extractSeedHash(mem);
     checkSeedHashes(seedHashMem, computeSeedHash(seed)); //throws if bad seedHash

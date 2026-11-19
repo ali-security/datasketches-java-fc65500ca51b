@@ -22,6 +22,7 @@ package org.apache.datasketches.theta;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.datasketches.Util.DEFAULT_UPDATE_SEED;
 import static org.apache.datasketches.Util.LONG_MAX_VALUE_AS_DOUBLE;
+import static org.apache.datasketches.Util.MAX_LG_NOM_LONGS;
 import static org.apache.datasketches.Util.MIN_LG_NOM_LONGS;
 import static org.apache.datasketches.Util.checkSeedHashes;
 import static org.apache.datasketches.Util.computeSeedHash;
@@ -36,13 +37,13 @@ import static org.apache.datasketches.theta.PreambleUtil.READ_ONLY_FLAG_MASK;
 import static org.apache.datasketches.theta.PreambleUtil.SER_VER;
 import static org.apache.datasketches.theta.PreambleUtil.SER_VER_BYTE;
 import static org.apache.datasketches.theta.PreambleUtil.checkMemorySeedHash;
+import static org.apache.datasketches.theta.PreambleUtil.extractCurCount;
 import static org.apache.datasketches.theta.PreambleUtil.extractFamilyID;
 import static org.apache.datasketches.theta.PreambleUtil.extractFlags;
 import static org.apache.datasketches.theta.PreambleUtil.extractLgResizeFactor;
 import static org.apache.datasketches.theta.PreambleUtil.extractP;
 import static org.apache.datasketches.theta.PreambleUtil.extractSerVer;
 import static org.apache.datasketches.theta.PreambleUtil.extractThetaLong;
-import static org.apache.datasketches.theta.PreambleUtil.getMemBytes;
 import static org.apache.datasketches.theta.UpdateReturnState.RejectedNullOrEmpty;
 
 import org.apache.datasketches.Family;
@@ -405,9 +406,19 @@ public abstract class UpdateSketch extends Sketch {
     final short seedHash = checkMemorySeedHash(srcMem, expectedSeed);              //byte 6,7
     checkSeedHashes(seedHash, computeSeedHash(expectedSeed));
 
-    //Check mem capacity, lgArrLongs
+    //Check lgNomLongs, lgArrLongs and curCount. The hash table grows to at most twice the nominal entries.
+    if ((lgNomLongs > MAX_LG_NOM_LONGS) || (lgArrLongs < 0) || (lgArrLongs > (lgNomLongs + 1))) {
+      throw new SketchesArgumentException("Possible corruption: lgNomLongs: " + lgNomLongs
+          + ", lgArrLongs: " + lgArrLongs);
+    }
+    final int curCount = extractCurCount(srcMem);
+    if ((curCount < 0) || (curCount > (1 << lgArrLongs))) {
+      throw new SketchesArgumentException("Possible corruption: invalid curCount: " + curCount);
+    }
+
+    //Check mem capacity, computed in long arithmetic so that it cannot overflow
     final long curCapBytes = srcMem.getCapacity();
-    final int minReqBytes = getMemBytes(lgArrLongs, preambleLongs);
+    final long minReqBytes = (8L << lgArrLongs) + ((long) preambleLongs << 3);
     if (curCapBytes < minReqBytes) {
       throw new SketchesArgumentException(
           "Possible corruption: Current Memory size < min required size: "

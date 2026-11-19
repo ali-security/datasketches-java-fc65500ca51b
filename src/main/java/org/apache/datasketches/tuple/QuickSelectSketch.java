@@ -21,8 +21,12 @@ package org.apache.datasketches.tuple;
 
 import static org.apache.datasketches.HashOperations.count;
 import static org.apache.datasketches.Util.REBUILD_THRESHOLD;
+import static org.apache.datasketches.Util.MAX_LG_NOM_LONGS;
+import static org.apache.datasketches.Util.MIN_LG_ARR_LONGS;
 import static org.apache.datasketches.Util.RESIZE_THRESHOLD;
 import static org.apache.datasketches.Util.ceilingPowerOf2;
+import static org.apache.datasketches.Util.checkBounds;
+import static org.apache.datasketches.Util.startingSubMultiple;
 import static org.apache.datasketches.Util.simpleLog2OfLong;
 
 import java.lang.reflect.Array;
@@ -184,11 +188,20 @@ class QuickSelectSketch<S extends Summary> extends Sketch<S> {
     if (isBigEndian ^ ByteOrder.nativeOrder().equals(ByteOrder.BIG_ENDIAN)) {
       throw new SketchesArgumentException("Endian byte order mismatch");
     }
-    nomEntries_ = 1 << mem.getByte(offset++);
-    lgCurrentCapacity_ = mem.getByte(offset++);
+    final int lgNomEntries = mem.getByte(offset++);
+    final int lgCurCapacity = mem.getByte(offset++);
     lgResizeFactor_ = mem.getByte(offset++);
+    // lgK is at most 26, as for Theta. The hash table grows to at most twice the nominal entries,
+    // but is never smaller than the minimum table size.
+    if ((lgNomEntries < 0) || (lgNomEntries > MAX_LG_NOM_LONGS) || (lgCurCapacity < 0)
+        || (lgCurCapacity > Math.max(lgNomEntries + 1, MIN_LG_ARR_LONGS))) {
+      throw new SketchesArgumentException("Possible corruption: lgNomEntries: " + lgNomEntries
+          + ", lgCurrentCapacity: " + lgCurCapacity);
+    }
+    nomEntries_ = 1 << lgNomEntries;
 
     final boolean isInSamplingMode = (flags & 1 << Flags.IS_IN_SAMPLING_MODE.ordinal()) > 0;
+    if (isInSamplingMode) { checkBounds(offset, Float.BYTES, mem.getCapacity()); }
     samplingProbability_ = isInSamplingMode ? mem.getFloat(offset) : 1f;
     if (isInSamplingMode) {
       offset += Float.BYTES;
@@ -196,6 +209,7 @@ class QuickSelectSketch<S extends Summary> extends Sketch<S> {
 
     final boolean isThetaIncluded = (flags & 1 << Flags.IS_THETA_INCLUDED.ordinal()) > 0;
     if (isThetaIncluded) {
+      checkBounds(offset, Long.BYTES, mem.getCapacity());
       thetaLong_ = mem.getLong(offset);
       offset += Long.BYTES;
     } else {
@@ -205,9 +219,17 @@ class QuickSelectSketch<S extends Summary> extends Sketch<S> {
     int count = 0;
     final boolean hasEntries = (flags & 1 << Flags.HAS_ENTRIES.ordinal()) > 0;
     if (hasEntries) {
+      checkBounds(offset, Integer.BYTES, mem.getCapacity());
       count = mem.getInt(offset);
       offset += Integer.BYTES;
     }
+    // each entry is at least an 8-byte hash, so the image bounds the count
+    if ((count < 0) || (count >= (1L << lgCurCapacity))
+        || (((long) count * Long.BYTES) > (mem.getCapacity() - offset))) {
+      throw new SketchesArgumentException("Possible corruption: invalid retained entries count: " + count);
+    }
+    checkLgCurrentCapacity(lgCurCapacity, count, lgNomEntries, lgResizeFactor_);
+    lgCurrentCapacity_ = lgCurCapacity;
     final int currentCapacity = 1 << lgCurrentCapacity_;
     hashTable_ = new long[currentCapacity];
     for (int i = 0; i < count; i++) {
@@ -221,6 +243,29 @@ class QuickSelectSketch<S extends Summary> extends Sketch<S> {
     }
     empty_ = (flags & 1 << Flags.IS_EMPTY.ordinal()) > 0;
     setRebuildThreshold();
+  }
+
+  /**
+   * Checks that the hash table size declared by an image is plausible for the number of entries it holds.
+   * A table only grows when its entries reach a threshold, so its size is either the starting size or
+   * at most about 16 times the number of entries, just after a resize with the largest resize factor.
+   * This bounds the allocation by the size of the image.
+   * @param lgCurCapacity log2 of the current table size declared by the image
+   * @param count the number of entries in the image
+   * @param lgNomEntries log2 of the nominal entries
+   * @param lgResizeFactor log2 of the resize factor
+   */
+  private static void checkLgCurrentCapacity(final int lgCurCapacity, final int count, final int lgNomEntries,
+      final int lgResizeFactor) {
+    if ((lgResizeFactor < 0) || (lgResizeFactor > ResizeFactor.X8.lg())) {
+      throw new SketchesArgumentException("Possible corruption: lgResizeFactor: " + lgResizeFactor);
+    }
+    final int lgStart = startingSubMultiple(lgNomEntries + 1, lgResizeFactor, MIN_LG_ARR_LONGS);
+    final int lgCount = (count <= 1) ? 0 : 32 - Integer.numberOfLeadingZeros(count - 1); //ceiling log2
+    if (lgCurCapacity > Math.max(lgStart, lgCount + 5)) {
+      throw new SketchesArgumentException("Possible corruption: lgCurrentCapacity " + lgCurCapacity
+          + " is too large for " + count + " retained entries");
+    }
   }
 
   /**

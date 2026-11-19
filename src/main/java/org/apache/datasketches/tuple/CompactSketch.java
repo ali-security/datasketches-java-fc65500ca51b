@@ -20,6 +20,7 @@
 package org.apache.datasketches.tuple;
 
 import static org.apache.datasketches.HashOperations.count;
+import static org.apache.datasketches.Util.checkBounds;
 
 import java.lang.reflect.Array;
 import java.nio.ByteOrder;
@@ -104,11 +105,13 @@ public class CompactSketch<S extends Summary> extends Sketch<S> {
         if (version == serialVersionWithSummaryClassNameUID) {
           classNameLength = mem.getByte(offset++);
         }
+        checkBounds(offset, Integer.BYTES, mem.getCapacity());
         final int count = mem.getInt(offset);
         offset += Integer.BYTES;
         if (version == serialVersionWithSummaryClassNameUID) {
           offset += classNameLength;
         }
+        checkCount(count, offset, mem);
         hashArr_ = new long[count];
         for (int i = 0; i < count; i++) {
           hashArr_[i] = mem.getLong(offset);
@@ -119,6 +122,7 @@ public class CompactSketch<S extends Summary> extends Sketch<S> {
         }
       }
     } else { // current serial format
+      checkBounds(0, (long) preambleLongs * Long.BYTES, mem.getCapacity());
       offset++; //skip unused byte
       final byte flags = mem.getByte(offset++);
       offset += 2; //skip 2 unused bytes
@@ -138,12 +142,26 @@ public class CompactSketch<S extends Summary> extends Sketch<S> {
           }
         }
       }
+      checkCount(count, offset, mem);
       hashArr_ = new long[count];
       for (int i = 0; i < count; i++) {
         hashArr_[i] = mem.getLong(offset);
         offset += Long.BYTES;
         offset += readSummary(mem, offset, i, count, deserializer);
       }
+    }
+  }
+
+  /**
+   * Checks the retained entries count read from an image. Each entry is at least an 8-byte hash,
+   * so the remaining bytes of the image bound the count.
+   * @param count the retained entries count
+   * @param offset the offset of the first entry
+   * @param mem the image
+   */
+  private static void checkCount(final int count, final int offset, final Memory mem) {
+    if ((count < 0) || (((long) count * Long.BYTES) > (mem.getCapacity() - offset))) {
+      throw new SketchesArgumentException("Possible corruption: invalid retained entries count: " + count);
     }
   }
 

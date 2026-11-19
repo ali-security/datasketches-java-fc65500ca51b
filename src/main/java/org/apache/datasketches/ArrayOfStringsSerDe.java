@@ -57,14 +57,15 @@ public class ArrayOfStringsSerDe extends ArrayOfItemsSerDe<String> {
 
   @Override
   public String[] deserializeFromMemory(final Memory mem, final int numItems) {
+    Util.checkBounds(0, (long) numItems * Integer.BYTES, mem.getCapacity());
     final String[] array = new String[numItems];
     long offsetBytes = 0;
     for (int i = 0; i < numItems; i++) {
       Util.checkBounds(offsetBytes, Integer.BYTES, mem.getCapacity());
       final int strLength = mem.getInt(offsetBytes);
       offsetBytes += Integer.BYTES;
-      final byte[] bytes = new byte[strLength];
       Util.checkBounds(offsetBytes, strLength, mem.getCapacity());
+      final byte[] bytes = new byte[strLength];
       mem.getByteArray(offsetBytes, bytes, 0, strLength);
       offsetBytes += strLength;
       array[i] = new String(bytes, StandardCharsets.UTF_8);

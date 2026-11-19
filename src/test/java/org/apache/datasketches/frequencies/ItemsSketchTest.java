@@ -421,4 +421,37 @@ public class ItemsSketchTest {
   static void println(String s) {
     //System.out.println(s); //disable here
   }
+
+  private static byte[] itemsImage() {
+    final ItemsSketch<Long> fis = new ItemsSketch<>(1 << 10);
+    for (long i = 0; i < 5; i++) { fis.update(i, i + 1); }
+    return fis.toByteArray(new ArrayOfLongsSerDe());
+  }
+
+  @Test
+  public void checkBinaryDeserLargeDeclaredMapDoesNotAllocate() {
+    final byte[] bytes = itemsImage();
+    bytes[PreambleUtil.LG_MAX_MAP_SIZE_BYTE] = 30;
+    bytes[PreambleUtil.LG_CUR_MAP_SIZE_BYTE] = 30;
+    final Memory mem = Memory.wrap(bytes);
+    final long allocated = org.apache.datasketches.AllocationTracker.allocatedBytes(
+        () -> ItemsSketch.getInstance(mem, new ArrayOfLongsSerDe()));
+    assertTrue(allocated < (1 << 20), "allocated " + allocated);
+    final ItemsSketch<Long> fis = ItemsSketch.getInstance(mem, new ArrayOfLongsSerDe());
+    assertEquals(fis.getNumActiveItems(), 5);
+    assertEquals(fis.getEstimate(4L), 5);
+  }
+
+  @Test
+  public void checkBinaryDeserInconsistentSizes() {
+    final byte[] curTooBig = itemsImage();
+    curTooBig[PreambleUtil.LG_CUR_MAP_SIZE_BYTE] = (byte) (curTooBig[PreambleUtil.LG_MAX_MAP_SIZE_BYTE] + 1);
+    final byte[] tooManyActive = itemsImage();
+    org.apache.datasketches.ByteArrayUtil.putIntLE(tooManyActive, 8, 1 << 20);
+    for (final byte[] b : new byte[][] {curTooBig, tooManyActive}) {
+      try { ItemsSketch.getInstance(Memory.wrap(b), new ArrayOfLongsSerDe()); fail(); }
+      catch (final SketchesArgumentException e) { }
+    }
+  }
+
 }

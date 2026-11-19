@@ -63,7 +63,6 @@ public class ReqCompactorTest {
   private static void checkSerDeImpl(final int k, final boolean hra) {
     final ReqCompactor c1 = new ReqCompactor((byte)0, hra, k, null);
     final int nomCap = 2 * 3 * k;
-    final int cap = 2 * nomCap;
     final int delta = nomCap;
     final FloatBuffer buf = c1.getBuffer();
 
@@ -82,7 +81,7 @@ public class ReqCompactorTest {
     final byte[] c1ser = c1.toByteArray();
     //now deserialize
     final Buffer buff = Memory.wrap(c1ser).asBuffer();
-    final Compactor compactor = ReqSerDe.extractCompactor(buff, sorted, c1hra);
+    final Compactor compactor = ReqSerDe.extractCompactor(buff, k, sorted, c1hra);
     final ReqCompactor c2 = compactor.reqCompactor;
     assertEquals(compactor.minVal, minV);
     assertEquals(compactor.maxVal, maxV);
@@ -94,8 +93,13 @@ public class ReqCompactorTest {
     assertEquals(c2.getLgWeight(), lgWeight);
     assertEquals(c2.isHighRankAccuracy(), c1hra);
     final FloatBuffer buf2 = c2.getBuffer();
-    assertEquals(buf2.getCapacity(), cap);
+    //deserialization sizes the buffer to the items it holds; the buffer grows as needed
+    assertTrue(buf2.getCapacity() >= compactor.count);
     assertEquals(buf2.getDelta(), delta);
-    assertTrue(buf.isEqualTo(buf2));
+    assertEquals(buf2.getCount(), buf.getCount());
+    assertEquals(buf2.isSorted(), buf.isSorted());
+    for (int i = 0; i < buf.getCount(); i++) {
+      assertEquals(buf2.getItem(i), buf.getItem(i));
+    }
   }
 }

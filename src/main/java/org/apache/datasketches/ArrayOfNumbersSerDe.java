@@ -101,6 +101,7 @@ public class ArrayOfNumbersSerDe extends ArrayOfItemsSerDe<Number> {
 
   @Override
   public Number[] deserializeFromMemory(final Memory mem, final int length) {
+    Util.checkBounds(0, length, mem.getCapacity()); //each item has at least a 1-byte type code
     final Number[] array = new Number[length];
     long offsetBytes = 0;
     for (int i = 0; i < length; i++) {

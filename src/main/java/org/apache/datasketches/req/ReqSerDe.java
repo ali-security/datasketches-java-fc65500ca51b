@@ -26,6 +26,7 @@ import static java.lang.Math.round;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.datasketches.SketchesArgumentException;
 import org.apache.datasketches.memory.Buffer;
 import org.apache.datasketches.memory.Memory;
 import org.apache.datasketches.memory.WritableBuffer;
@@ -147,6 +148,10 @@ class ReqSerDe {
     final int k = buff.getShort() & 0xFFFF;
     final int numCompactors = buff.getByte() & 0xFF;
     final int numRawItems = buff.getByte() & 0xFF;
+    if (((k & 1) > 0) || (k < ReqSketch.MIN_K) || (k > 1024)) {
+      throw new SketchesArgumentException(
+          "Possible corruption: K must be even and in the range [4, 1024]: " + k);
+    }
     //  extract different serialization formats
     final SerDeFormat deserFormat = getDeserFormat(empty, rawItems, numCompactors);
     switch (deserFormat) {
@@ -162,7 +167,7 @@ class ReqSerDe {
       }
       case EXACT: {
         assert preInts == 2;
-        final Compactor compactor = extractCompactor(buff, lvl0Sorted, hra);
+        final Compactor compactor = extractCompactor(buff, k, lvl0Sorted, hra);
         //Construct sketch
         final long totalN = compactor.count;
         final float minValue = compactor.minVal;
@@ -183,7 +188,7 @@ class ReqSerDe {
         final List<ReqCompactor> compactors = new ArrayList<>();
         for (int i = 0; i < numCompactors; i++) {
           final boolean level0sorted = i == 0 ? lvl0Sorted : true;
-          final Compactor compactor = extractCompactor(buff, level0sorted, hra);
+          final Compactor compactor = extractCompactor(buff, k, level0sorted, hra);
           compactors.add(compactor.reqCompactor);
         }
         final ReqSketch sk = new ReqSketch(k, hra, totalN, minValue, maxValue, compactors);
@@ -194,7 +199,7 @@ class ReqSerDe {
     }
   }
 
-  static final Compactor extractCompactor(final Buffer buff, final boolean lvl0Sorted,
+  static final Compactor extractCompactor(final Buffer buff, final int k, final boolean lvl0Sorted,
       final boolean hra) {
     final long state = buff.getLong();
     final float sectionSizeFlt = buff.getFloat();
@@ -203,6 +208,17 @@ class ReqSerDe {
     final byte numSections = buff.getByte();
     buff.incrementPosition(2);
     final int count = buff.getInt();
+    // The section size starts at k and only shrinks, and as the number of sections doubles the section size
+    // shrinks by sqrt(2) to no less than MIN_K, so sectionSize * numSections stays below k * k.
+    if ((sectionSize < 1) || (sectionSize > k) || (numSections < 1)
+        || (((long) sectionSize * numSections) > ((long) k * k))) {
+      throw new SketchesArgumentException("Possible corruption: sectionSize: " + sectionSize
+          + ", numSections: " + numSections + ", k: " + k);
+    }
+    if ((count < 0) || (((long) count * Float.BYTES) > buff.getRemaining())) {
+      throw new SketchesArgumentException("Possible corruption: compactor count " + count
+          + " does not fit in the remaining " + buff.getRemaining() + " bytes");
+    }
     final float[] arr = new float[count];
     buff.getFloatArray(arr, 0, count);
     float minValue = Float.MAX_VALUE;
@@ -212,8 +228,8 @@ class ReqSerDe {
       maxValue = max(maxValue, arr[i]);
     }
     final int delta = 2 * sectionSize * numSections;
-    final int nomCap = 2 * delta;
-    final int cap = max(count, nomCap);
+    // The buffer grows as needed, so it only has to hold the items in the image.
+    final int cap = count;
     final FloatBuffer fltBuf = FloatBuffer.reconstruct(arr, count, cap, delta, lvl0Sorted, hra);
     final ReqCompactor reqCompactor =
         new ReqCompactor(lgWt, hra, state, sectionSizeFlt, numSections, fltBuf);

@@ -20,6 +20,7 @@
 package org.apache.datasketches.frequencies;
 
 import static org.apache.datasketches.Util.LS;
+import static org.apache.datasketches.Util.checkBounds;
 import static org.apache.datasketches.Util.isPowerOf2;
 import static org.apache.datasketches.Util.toLog2;
 import static org.apache.datasketches.frequencies.PreambleUtil.EMPTY_FLAG_MASK;
@@ -40,6 +41,7 @@ import static org.apache.datasketches.frequencies.PreambleUtil.insertPreLongs;
 import static org.apache.datasketches.frequencies.PreambleUtil.insertSerVer;
 import static org.apache.datasketches.frequencies.Util.LG_MIN_MAP_SIZE;
 import static org.apache.datasketches.frequencies.Util.SAMPLE_SIZE;
+import static org.apache.datasketches.frequencies.Util.checkMapSizes;
 
 import java.lang.reflect.Array;
 import java.util.ArrayList;
@@ -264,12 +266,17 @@ public class ItemsSketch<T> {
     final long[] preArr = new long[preLongs];
     srcMem.getLongArray(0, preArr, 0, preLongs);
 
-    final ItemsSketch<T> fis = new ItemsSketch<>(lgMaxMapSize, lgCurMapSize);
+    final int preBytes = preLongs << 3;
+    final int activeItems = extractActiveItems(preArr[1]);
+    final int lgStartMapSize =
+        checkMapSizes(lgMaxMapSize, lgCurMapSize, activeItems, ReversePurgeItemHashMap.getLoadFactor());
+    final long reqBytes = (preBytes + ((long)activeItems * Long.BYTES)); //count Arr only
+    checkBounds(0, reqBytes, srcMem.getCapacity()); //check Memory capacity before allocating
+
+    final ItemsSketch<T> fis = new ItemsSketch<>(lgMaxMapSize, lgStartMapSize);
     fis.streamWeight = 0; //update after
     fis.offset = preArr[3];
 
-    final int preBytes = preLongs << 3;
-    final int activeItems = extractActiveItems(preArr[1]);
     //Get countArray
     final long[] countArray = new long[activeItems];
     srcMem.getLongArray(preBytes, countArray, 0, activeItems);

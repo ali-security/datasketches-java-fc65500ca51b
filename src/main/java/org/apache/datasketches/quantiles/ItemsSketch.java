@@ -198,9 +198,16 @@ public final class ItemsSketch<T> {
     //Not empty, must have valid preamble + min, max
     final long n = extractN(srcMem);
 
-    //can't check memory capacity here, not enough information
+    //can't check the exact memory capacity here, not enough information
     final int extra = 2; //for min, max
     final int numMemItems = Util.computeRetainedItems(k, n) + extra;
+    //No serialized item takes less than one bit (booleans are packed 8 per byte),
+    //so the image bounds the number of items before the buffer is allocated.
+    final long itemsBytes = memCapBytes - ((long) preambleLongs * Long.BYTES);
+    if ((n < 0) || ((long) numMemItems > (8L * itemsBytes))) {
+      throw new SketchesArgumentException("Possible corruption: n = " + n + " requires " + numMemItems
+          + " items, but only " + itemsBytes + " bytes remain");
+    }
 
     //set class members
     qs.n_ = n;

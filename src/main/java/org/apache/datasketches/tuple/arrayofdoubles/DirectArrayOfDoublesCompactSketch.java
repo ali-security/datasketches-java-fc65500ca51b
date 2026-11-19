@@ -134,7 +134,7 @@ final class DirectArrayOfDoublesCompactSketch extends ArrayOfDoublesCompactSketc
    * @param mem <a href="{@docRoot}/resources/dictionary.html#mem">See Memory</a>
    */
   DirectArrayOfDoublesCompactSketch(final Memory mem) {
-    super(mem.getByte(NUM_VALUES_BYTE));
+    super(checkCompactImage(mem));
     mem_ = mem;
     SerializerDeserializer.validateFamily(mem.getByte(FAMILY_ID_BYTE),
         mem.getByte(PREAMBLE_LONGS_BYTE));
@@ -161,7 +161,7 @@ final class DirectArrayOfDoublesCompactSketch extends ArrayOfDoublesCompactSketc
    * @param seed <a href="{@docRoot}/resources/dictionary.html#seed">See seed</a>
    */
   DirectArrayOfDoublesCompactSketch(final Memory mem, final long seed) {
-    super(mem.getByte(NUM_VALUES_BYTE));
+    super(checkCompactImage(mem));
     mem_ = mem;
     SerializerDeserializer.validateFamily(mem.getByte(FAMILY_ID_BYTE),
         mem.getByte(PREAMBLE_LONGS_BYTE));

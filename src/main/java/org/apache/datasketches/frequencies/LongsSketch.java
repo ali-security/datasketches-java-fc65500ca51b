@@ -20,6 +20,7 @@
 package org.apache.datasketches.frequencies;
 
 import static org.apache.datasketches.Util.LS;
+import static org.apache.datasketches.Util.checkBounds;
 import static org.apache.datasketches.Util.isPowerOf2;
 import static org.apache.datasketches.Util.toLog2;
 import static org.apache.datasketches.frequencies.PreambleUtil.EMPTY_FLAG_MASK;
@@ -40,6 +41,7 @@ import static org.apache.datasketches.frequencies.PreambleUtil.insertPreLongs;
 import static org.apache.datasketches.frequencies.PreambleUtil.insertSerVer;
 import static org.apache.datasketches.frequencies.Util.LG_MIN_MAP_SIZE;
 import static org.apache.datasketches.frequencies.Util.SAMPLE_SIZE;
+import static org.apache.datasketches.frequencies.Util.checkMapSizes;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -250,6 +252,16 @@ public class LongsSketch {
       throw new SketchesArgumentException(
           "Possible Corruption: (PreLongs == 1) ^ Empty == True.");
     }
+    if (lgCurMapSize < LG_MIN_MAP_SIZE) {               //Byte 4
+      throw new SketchesArgumentException(
+          "Possible Corruption: LgCurMapSize must be at least " + LG_MIN_MAP_SIZE + ": "
+            + lgCurMapSize);
+    }
+    if (lgCurMapSize > lgMaxMapSize) {                  //Byte 4 and Byte 3
+      throw new SketchesArgumentException(
+          "Possible Corruption: LgCurMapSize must not exceed LgMaxMapSize: "
+            + lgCurMapSize + " > " + lgMaxMapSize);
+    }
 
     if (empty) {
       return new LongsSketch(lgMaxMapSize, LG_MIN_MAP_SIZE);
@@ -258,12 +270,17 @@ public class LongsSketch {
     final long[] preArr = new long[preLongs];
     srcMem.getLongArray(0, preArr, 0, preLongs);
 
-    final LongsSketch fls = new LongsSketch(lgMaxMapSize, lgCurMapSize);
+    final int preBytes = preLongs << 3;
+    final int activeItems = extractActiveItems(preArr[1]);
+    final int lgStartMapSize =
+        checkMapSizes(lgMaxMapSize, lgCurMapSize, activeItems, ReversePurgeLongHashMap.getLoadFactor());
+    final long reqBytes = preBytes + (2L * activeItems * Long.BYTES); //count Arr + Items Arr
+    checkBounds(0, reqBytes, srcMem.getCapacity()); //check Memory capacity before allocating
+
+    final LongsSketch fls = new LongsSketch(lgMaxMapSize, lgStartMapSize);
     fls.streamWeight = 0; //update after
     fls.offset = preArr[3];
 
-    final int preBytes = preLongs << 3;
-    final int activeItems = extractActiveItems(preArr[1]);
     //Get countArray
     final long[] countArray = new long[activeItems];
     srcMem.getLongArray(preBytes, countArray, 0, activeItems);
@@ -317,6 +334,21 @@ public class LongsSketch {
       throw new SketchesArgumentException(
           "Possible Corruption: Incorrect # of tokens: " + numTokens
             + ", numActive: " + numActive);
+    }
+    if (lgCur < LG_MIN_MAP_SIZE) {
+      throw new SketchesArgumentException(
+          "Possible Corruption: Map length must be at least " + (1 << LG_MIN_MAP_SIZE) + ": "
+            + tokens[STR_PREAMBLE_TOKENS + 1]);
+    }
+    if (lgCur > lgMax) {
+      throw new SketchesArgumentException(
+          "Possible Corruption: Map length must not exceed max map length " + (1L << lgMax) + ": "
+            + tokens[STR_PREAMBLE_TOKENS + 1]);
+    }
+    final long maxActive = (long) ((1L << lgCur) * ReversePurgeLongHashMap.getLoadFactor());
+    if ((numActive < 0) || (numActive > maxActive)) {
+      throw new SketchesArgumentException(
+          "Possible Corruption: numActive exceeds map capacity: " + numActive);
     }
 
     final LongsSketch sketch = new LongsSketch(lgMax, lgCur);

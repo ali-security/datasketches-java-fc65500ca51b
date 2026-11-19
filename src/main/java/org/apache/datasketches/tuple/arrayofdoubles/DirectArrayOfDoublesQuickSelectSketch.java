@@ -100,7 +100,7 @@ class DirectArrayOfDoublesQuickSelectSketch extends ArrayOfDoublesQuickSelectSke
    * @param seed update seed
    */
   DirectArrayOfDoublesQuickSelectSketch(final WritableMemory mem, final long seed) {
-    super(mem.getByte(NUM_VALUES_BYTE), seed);
+    super(checkQuickSelectImage(mem), seed);
     mem_ = mem;
     SerializerDeserializer.validateFamily(mem.getByte(FAMILY_ID_BYTE),
         mem.getByte(PREAMBLE_LONGS_BYTE));

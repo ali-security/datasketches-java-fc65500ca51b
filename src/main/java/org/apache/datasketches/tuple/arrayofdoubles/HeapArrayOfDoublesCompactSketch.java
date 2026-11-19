@@ -113,7 +113,7 @@ final class HeapArrayOfDoublesCompactSketch extends ArrayOfDoublesCompactSketch 
    * @param seed <a href="{@docRoot}/resources/dictionary.html#seed">See seed</a>
    */
   HeapArrayOfDoublesCompactSketch(final Memory mem, final long seed) {
-    super(mem.getByte(NUM_VALUES_BYTE));
+    super(checkCompactImage(mem));
     seedHash_ = mem.getShort(SEED_HASH_SHORT);
     SerializerDeserializer.validateFamily(mem.getByte(FAMILY_ID_BYTE),
         mem.getByte(PREAMBLE_LONGS_BYTE));

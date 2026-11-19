@@ -23,6 +23,8 @@ import static org.apache.datasketches.Util.LS;
 import static org.apache.datasketches.frequencies.DistTest.randomGeometricDist;
 import static org.apache.datasketches.frequencies.PreambleUtil.FAMILY_BYTE;
 import static org.apache.datasketches.frequencies.PreambleUtil.FLAGS_BYTE;
+import static org.apache.datasketches.frequencies.PreambleUtil.LG_CUR_MAP_SIZE_BYTE;
+import static org.apache.datasketches.frequencies.PreambleUtil.LG_MAX_MAP_SIZE_BYTE;
 import static org.apache.datasketches.frequencies.PreambleUtil.PREAMBLE_LONGS_BYTE;
 import static org.apache.datasketches.frequencies.PreambleUtil.SER_VER_BYTE;
 import static org.apache.datasketches.frequencies.Util.LG_MIN_MAP_SIZE;
@@ -546,6 +548,68 @@ public class LongsSketchTest {
     LongsSketch.getInstance(s);
   }
 
+  @Test(expectedExceptions = SketchesArgumentException.class, timeOut = 5000)
+  public void checkStringDeserMapLengthTooSmall() {
+    final String s = "1,"  //serVer
+             + "10," //FamID
+             + "3,"  //lgMaxMapSz
+             + "5,"  //Empty Flag
+             + "0,"  //stream Len: empty
+             + "0,"  //error offset
+             + "0,"  //numActive
+             + "2,"; //curMapLen ... corrupted, below the minimum of 8
+    final LongsSketch fls = LongsSketch.getInstance(s);
+    fls.update(1);
+    fls.update(2);
+    fls.update(3);
+  }
+
+  @Test(expectedExceptions = SketchesArgumentException.class, timeOut = 5000)
+  public void checkStringDeserNumActiveExceedsMapCapacity() {
+    final StringBuilder sb = new StringBuilder();
+    sb.append("1,")  //serVer
+      .append("10,") //FamID
+      .append("3,")  //lgMaxMapSz
+      .append("0,")  //Empty Flag = false
+      .append("9,")  //stream Len
+      .append("0,")  //error offset
+      .append("9,")  //numActive ... corrupted, more than the map can hold
+      .append("8,"); //curMapLen
+    for (int i = 1; i <= 9; i++) { sb.append(i).append(",1,"); }
+    LongsSketch.getInstance(sb.toString());
+  }
+
+  @Test(expectedExceptions = SketchesArgumentException.class, timeOut = 5000)
+  public void checkStringDeserMapLengthExceedsMax() {
+    final String s = "1,"  //serVer
+             + "10," //FamID
+             + "3,"  //lgMaxMapSz
+             + "5,"  //Empty Flag
+             + "0,"  //stream Len: empty
+             + "0,"  //error offset
+             + "0,"  //numActive
+             + "16,"; //curMapLen ... corrupted, above the max of 8
+    LongsSketch.getInstance(s);
+  }
+
+  @Test(expectedExceptions = SketchesArgumentException.class, timeOut = 5000)
+  public void checkMemDeserLgCurMapSizeTooSmall() {
+    final LongsSketch sk = new LongsSketch(1 << 8);
+    sk.update(1);
+    final byte[] bytes = sk.toByteArray();
+    bytes[LG_CUR_MAP_SIZE_BYTE] = (byte) (LG_MIN_MAP_SIZE - 1); //corrupted, below the minimum
+    LongsSketch.getInstance(Memory.wrap(bytes));
+  }
+
+  @Test(expectedExceptions = SketchesArgumentException.class, timeOut = 5000)
+  public void checkMemDeserLgCurMapSizeExceedsLgMax() {
+    final LongsSketch sk = new LongsSketch(1 << 8);
+    sk.update(1);
+    final byte[] bytes = sk.toByteArray();
+    bytes[LG_CUR_MAP_SIZE_BYTE] = (byte) (bytes[LG_MAX_MAP_SIZE_BYTE] + 1); //corrupted, above max
+    LongsSketch.getInstance(Memory.wrap(bytes));
+  }
+
   @Test
   public void checkGetEpsilon() {
     assertEquals(LongsSketch.getEpsilon(1024), 3.5 / 1024, 0.0);
@@ -611,6 +675,57 @@ public class LongsSketchTest {
     double loadFactor = ReversePurgeLongHashMap.getLoadFactor();
     int maxMapSize = Util.ceilingPowerOf2((int) (1.0 /(eps*loadFactor)));
     return new LongsSketch(maxMapSize);
+  }
+
+
+  private static byte[] longsImage() {
+    final LongsSketch fls = new LongsSketch(1 << 10);
+    for (int i = 0; i < 5; i++) { fls.update(i, i + 1); }
+    return fls.toByteArray();
+  }
+
+  @Test
+  public void checkBinaryDeserLargeDeclaredMapDoesNotAllocate() {
+    final byte[] bytes = longsImage();
+    bytes[PreambleUtil.LG_MAX_MAP_SIZE_BYTE] = 30;
+    bytes[PreambleUtil.LG_CUR_MAP_SIZE_BYTE] = 30;
+    final Memory mem = Memory.wrap(bytes);
+    final long allocated = org.apache.datasketches.AllocationTracker.allocatedBytes(
+        () -> LongsSketch.getInstance(mem));
+    assertTrue(allocated < (1 << 20), "allocated " + allocated);
+    final LongsSketch fls = LongsSketch.getInstance(mem);
+    assertEquals(fls.getNumActiveItems(), 5);
+    assertEquals(fls.getEstimate(4), 5);
+  }
+
+  @Test
+  public void checkBinaryDeserInconsistentSizes() {
+    final byte[] curTooBig = longsImage();
+    curTooBig[PreambleUtil.LG_CUR_MAP_SIZE_BYTE] = (byte) (curTooBig[PreambleUtil.LG_MAX_MAP_SIZE_BYTE] + 1);
+    final byte[] curTooSmall = longsImage();
+    curTooSmall[PreambleUtil.LG_CUR_MAP_SIZE_BYTE] = 2;
+    final byte[] tooManyActive = longsImage();
+    org.apache.datasketches.ByteArrayUtil.putIntLE(tooManyActive, 8, 1 << 20);
+    final byte[] negActive = longsImage();
+    org.apache.datasketches.ByteArrayUtil.putIntLE(negActive, 8, -1);
+    for (final byte[] b : new byte[][] {curTooBig, curTooSmall, tooManyActive, negActive}) {
+      try { LongsSketch.getInstance(Memory.wrap(b)); fail(); }
+      catch (final SketchesArgumentException e) { }
+    }
+  }
+
+  @Test
+  public void checkBinaryDeserActiveItemsBeyondImage() {
+    final byte[] bytes = longsImage();
+    bytes[PreambleUtil.LG_MAX_MAP_SIZE_BYTE] = 30;
+    bytes[PreambleUtil.LG_CUR_MAP_SIZE_BYTE] = 30;
+    org.apache.datasketches.ByteArrayUtil.putIntLE(bytes, 8, 1 << 28); //more items than the image holds
+    final Memory mem = Memory.wrap(bytes);
+    final long allocated = org.apache.datasketches.AllocationTracker.allocatedBytes(
+        () -> LongsSketch.getInstance(mem));
+    assertTrue(allocated < (1 << 20), "allocated " + allocated);
+    try { LongsSketch.getInstance(mem); fail(); }
+    catch (final SketchesArgumentException e) { }
   }
 
 }
